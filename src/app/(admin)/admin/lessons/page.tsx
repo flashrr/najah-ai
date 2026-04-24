@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import AdminLessonsClient from './AdminLessonsClient'
 
 export default async function AdminLessonsPage() {
@@ -7,17 +7,21 @@ export default async function AdminLessonsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  // Service client — layout already verified admin role; service client
+  // ensures curriculum queries are not blocked by student-scoped RLS policies.
+  const db = createServiceClient()
+
   const [
     { data: lessons },
     { data: subjects },
     { data: weeks   },
   ] = await Promise.all([
-    supabase
+    db
       .from('lessons')
       .select('*, subject:subjects(name, icon, color), week:weeks(week_number, title)')
       .order('order_index'),
-    supabase.from('subjects').select('*'),
-    supabase.from('weeks').select('*').order('week_number'),
+    db.from('subjects').select('*'),
+    db.from('weeks').select('*').order('week_number'),
   ])
 
   return (

@@ -1,8 +1,10 @@
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 
 export default async function AdminDashboard() {
-  const supabase = await createClient()
+  // Layout already verified admin role. Use service client so platform-wide
+  // counts are not blocked by student-scoped RLS policies.
+  const supabase = createServiceClient()
 
   const [
     { count: studentCount },
@@ -75,6 +77,20 @@ export default async function AdminDashboard() {
               <div className="text-xs text-gray-400">Add & edit exercises</div>
             </div>
           </Link>
+          <Link href="/admin/resources" className="card hover:shadow-md transition-shadow flex items-center gap-3">
+            <span className="text-2xl">📹</span>
+            <div>
+              <div className="font-medium text-sm">Manage Resources</div>
+              <div className="text-xs text-gray-400">Videos, summaries, references</div>
+            </div>
+          </Link>
+          <Link href="/admin/pilot" className="card hover:shadow-md transition-shadow flex items-center gap-3 border-l-4 border-brand-300">
+            <span className="text-2xl">🚀</span>
+            <div>
+              <div className="font-medium text-sm">Pilot Dashboard</div>
+              <div className="text-xs text-gray-400">Live funnel &amp; student progress</div>
+            </div>
+          </Link>
         </div>
       </div>
 
@@ -83,7 +99,7 @@ export default async function AdminDashboard() {
         <h2 className="font-semibold mb-3">Recent students</h2>
         {recentStudents && recentStudents.length > 0 ? (
           <div className="space-y-2">
-            {recentStudents.map(s => (
+            {recentStudents.map((s: { id: string; created_at: string; profile: unknown }) => (
               <div key={s.id} className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-base">🧑‍🎓</span>

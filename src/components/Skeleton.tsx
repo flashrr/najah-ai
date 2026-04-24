@@ -52,16 +52,29 @@ export function SkeletonDashboard() {
 
 export function SkeletonWeeklyPlan() {
   return (
-    <div className="space-y-8">
-      <Skeleton className="h-8 w-48" />
-      {Array.from({ length: 2 }).map((_, w) => (
-        <div key={w} className="space-y-4">
-          <Skeleton className="h-6 w-32" />
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            {Array.from({ length: 5 }).map((_, l) => (
-              <Skeleton key={l} className="h-28" />
-            ))}
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Page title */}
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-64" />
+      </div>
+      {/* Plan header card */}
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="space-y-1.5">
+            <Skeleton className="h-5 w-44" />
+            <Skeleton className="h-3 w-28" />
           </div>
+        </div>
+        <Skeleton className="h-2 w-full rounded-full" />
+      </div>
+      {/* Day sections */}
+      {[2, 1, 2].map((count, i) => (
+        <div key={i} className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          {Array.from({ length: count }).map((_, j) => (
+            <Skeleton key={j} className="h-16 w-full rounded-xl" />
+          ))}
         </div>
       ))}
     </div>

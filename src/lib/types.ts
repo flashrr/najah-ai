@@ -41,9 +41,12 @@ export interface Lesson {
   id: string
   subject_id: string
   week_id: string
+  chapter_id: string | null
   title: string
   objective: string | null
   content_md: string
+  guided_example_md: string | null
+  prerequisites: string | null
   estimated_minutes: number
   difficulty: Difficulty
   order_index: number
@@ -130,6 +133,101 @@ export interface ParentStudentLink {
   created_at: string
   // joined
   student?: Student & { profiles?: Profile }
+}
+
+// ── Schedule types ────────────────────────────────────────────────────────────
+
+export interface SchoolTimetableEntry {
+  id:          string
+  student_id:  string
+  day_of_week: number   // 0=Sun, 1=Mon … 6=Sat
+  start_time:  string   // HH:MM (postgres time, sliced to HH:MM on read)
+  end_time:    string
+  label:       string | null
+  created_at:  string
+}
+
+export interface FreeTimeSlot {
+  id:          string
+  student_id:  string
+  day_of_week: number
+  start_time:  string
+  end_time:    string
+  label:       string | null
+  created_at:  string
+}
+
+// Lightweight shape used by the schedule editor (no id / student_id needed)
+export interface TimeBlock {
+  id?:         string   // undefined = new (not yet persisted)
+  day_of_week: number
+  start_time:  string   // HH:MM
+  end_time:    string   // HH:MM
+  label:       string
+}
+
+// ── Lesson Resource types ─────────────────────────────────────────────────────
+
+export type ResourceType =
+  | 'main_video'
+  | 'supplemental_video'
+  | 'summary'
+  | 'exercise_set'
+  | 'reference'
+  | 'worked_example'     // text-based step-by-step solved problem
+  | 'retrieval_quiz'     // 2–4 quick recall questions (markdown)
+  | 'worksheet_pdf'      // downloadable PDF worksheet (Phase 3)
+
+/** Fine-grained pedagogical role — applies to video resource_types only */
+export type VideoRole =
+  | 'main_explanation'      // primary teaching video for this lesson
+  | 'reinforcement'         // alternate / deeper explanation
+  | 'exercise_correction'   // walkthrough of corrected exercises
+  | 'worked_example_video'  // video of a solved worked example
+  | 'overview'              // subject/unit overview, not lesson-specific
+
+/** Where in the lesson flow this resource is rendered */
+export type PedagogicalPosition =
+  | 'before_content'    // shown before lesson text (struggling students)
+  | 'alongside_content' // shown inline during reading
+  | 'after_content'     // shown after lesson text, before exercises  (default)
+  | 'after_exercises'   // shown after exercises (correction, reinforcement)
+  | 'always_available'  // accessible regardless of position
+
+export interface LessonResource {
+  id:                    string
+  lesson_id:             string | null   // null = subject-level resource
+  subject_id:            string
+  resource_type:         ResourceType
+  title:                 string
+  description:           string | null
+  url:                   string | null
+  youtube_id:            string | null
+  thumbnail_url:         string | null
+  duration_seconds:      number | null
+  content_md:            string | null
+  language:              string
+  source_country:        string | null
+  source_name:           string | null
+  teacher_name:          string | null
+  curriculum_tag:        string | null
+  difficulty:            Difficulty | null
+  skill_tags:            string[] | null
+  quality_score:         number | null
+  is_active:             boolean
+  order_index:           number
+  target_level:          string
+  show_on_struggle:      boolean
+  show_on_mastery:       boolean
+  // ── v2 fields (Migration 011) ────────────────────────────────────────────
+  video_role:            VideoRole | null
+  is_validated:          boolean
+  min_diagnostic_score:  number | null
+  max_diagnostic_score:  number | null
+  pedagogical_position:  PedagogicalPosition
+  // ────────────────────────────────────────────────────────────────────────
+  created_at:            string
+  updated_at:            string
 }
 
 // API request/response types

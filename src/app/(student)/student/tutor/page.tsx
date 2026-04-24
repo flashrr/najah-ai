@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import TutorChat from '@/components/TutorChat'
 
 export default async function TutorPage() {
@@ -7,14 +7,19 @@ export default async function TutorPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: student } = await supabase
+  // Service client — auth already verified above; regular server client
+  // does not reliably propagate session to RLS in server components.
+  const admin = createServiceClient()
+  const { data: student } = await admin
     .from('students')
     .select('id')
     .eq('profile_id', user.id)
     .single()
-  if (!student) redirect('/login')
 
-  const { data: subjects } = await supabase.from('subjects').select('*')
+  if (!student) redirect('/')
+
+  // Service client bypasses RLS recursion caused by admin policies referencing profiles
+  const { data: subjects } = await admin.from('subjects').select('*')
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -33,7 +38,7 @@ export default async function TutorPage() {
         </div>
         <div className="p-4">
           <div className="flex gap-2 flex-wrap mb-4">
-            {subjects?.map(s => (
+            {(subjects as { id: string; icon: string; name: string; color: string }[] | null)?.map(s => (
               <span
                 key={s.id}
                 className="text-xs px-2 py-1 rounded-full font-medium"

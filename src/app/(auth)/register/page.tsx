@@ -2,12 +2,10 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { Role } from '@/lib/types'
 
 export default function RegisterPage() {
-  const router  = useRouter()
   const [fullName, setFullName]   = useState('')
   const [email, setEmail]         = useState('')
   const [password, setPassword]   = useState('')
@@ -49,10 +47,14 @@ export default function RegisterPage() {
       return
     }
 
-    // Session active — redirect based on role
-    if (role === 'admin')       router.push('/admin/dashboard')
-    else if (role === 'parent') router.push('/parent/dashboard')
-    else                        router.push('/student/dashboard')
+    // Session active — full page navigation so session cookies reach the server.
+    // router.push() sends an RSC fetch without the new session cookie, causing
+    // middleware and layouts to see an unauthenticated request.
+    const target =
+      role === 'admin'  ? '/admin/dashboard'  :
+      role === 'parent' ? '/parent/dashboard' :
+                          '/student/dashboard'
+    window.location.href = target
   }
 
   // Email confirmation pending screen
@@ -93,7 +95,7 @@ export default function RegisterPage() {
             <span>🎓</span> Najah AI
           </Link>
           <h1 className="mt-4 text-2xl font-bold text-gray-900">Create your account</h1>
-          <p className="text-sm text-gray-500 mt-1">Start your personalised learning journey</p>
+          <p className="text-sm text-gray-500 mt-1">Student or parent — choose your role below</p>
         </div>
 
         <div className="card">
@@ -147,21 +149,36 @@ export default function RegisterPage() {
 
             <div>
               <label className="label">I am a...</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['student', 'parent', 'admin'] as Role[]).map(r => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setRole(r)}
-                    className={`py-2 rounded-lg border text-sm font-medium transition-colors capitalize ${
-                      role === r
-                        ? 'border-brand-500 bg-brand-50 text-brand-700'
-                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    {r === 'student' ? '🧑‍🎓 Student' : r === 'parent' ? '👨‍👩‍👧 Parent' : '🛠️ Admin'}
-                  </button>
-                ))}
+              {/* Admin accounts are created by the platform — not self-serve */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRole('student')}
+                  className={`py-3 px-2 rounded-lg border text-sm font-medium transition-colors text-left ${
+                    role === 'student'
+                      ? 'border-brand-500 bg-brand-50 text-brand-700'
+                      : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="text-base mb-0.5">🧑‍🎓 Student</div>
+                  <div className={`text-xs font-normal ${role === 'student' ? 'text-brand-500' : 'text-gray-400'}`}>
+                    I&apos;m here to study
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole('parent')}
+                  className={`py-3 px-2 rounded-lg border text-sm font-medium transition-colors text-left ${
+                    role === 'parent'
+                      ? 'border-brand-500 bg-brand-50 text-brand-700'
+                      : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="text-base mb-0.5">👨‍👩‍👧 Parent</div>
+                  <div className={`text-xs font-normal ${role === 'parent' ? 'text-brand-500' : 'text-gray-400'}`}>
+                    I follow my child&apos;s progress
+                  </div>
+                </button>
               </div>
             </div>
 

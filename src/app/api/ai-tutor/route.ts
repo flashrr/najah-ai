@@ -32,6 +32,46 @@ Hard rules:
 const RATE_LIMIT = 30
 const RATE_WINDOW_MINUTES = 60
 
+// ── Provider helpers ───────────────────────────────────────────────────────
+
+type ChatMessages = OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+
+async function callOpenAI(model: string, messages: ChatMessages): Promise<string> {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+  const completion = await client.chat.completions.create({
+    model,
+    messages,
+    max_tokens:  600,
+    temperature: 0.7,
+  })
+  return completion.choices[0]?.message?.content ?? ''
+}
+
+async function callOpenRouter(model: string, messages: ChatMessages): Promise<string> {
+  const client = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey:  process.env.OPENROUTER_API_KEY!,
+  })
+  const completion = await client.chat.completions.create({
+    model,
+    messages,
+    max_tokens:  600,
+    temperature: 0.7,
+  })
+  return completion.choices[0]?.message?.content ?? ''
+}
+
+// Errors that are worth falling back from (quota, auth, server errors)
+function isRetryableProviderError(error: unknown): boolean {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const s = (error as { status: number }).status
+    return s === 429 || s === 401 || s === 403 || s === 500 || s === 502 || s === 503
+  }
+  return true // network/unknown errors are also retryable
+}
+
+// ── Main route ─────────────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   try {
     const body: AiTutorRequest = await request.json()
@@ -65,7 +105,7 @@ export async function POST(request: NextRequest) {
 
     if ((count ?? 0) >= RATE_LIMIT) {
       return NextResponse.json(
-        { error: `Rate limit reached. You can ask ${RATE_LIMIT} questions per hour. Please try again later.` },
+        { error: `You've reached the ${RATE_LIMIT} questions/hour limit. Please try again later.` },
         { status: 429 }
       )
     }
@@ -76,8 +116,7 @@ export async function POST(request: NextRequest) {
       endpoint: 'ai-tutor',
     }).then(() => {}).catch(() => {})
 
-    // ── Build context for the prompt ───────────────────────────────────
-    // Fetch lesson content for better context (if lesson_id provided)
+    // ── Build context ──────────────────────────────────────────────────
     let lessonContext = ''
     if (lesson_id) {
       const { data: lesson } = await supabase
@@ -88,7 +127,6 @@ export async function POST(request: NextRequest) {
       if (lesson) {
         lessonContext = `\nLesson: "${lesson.title}"`
         if (lesson.objective) lessonContext += `\nObjective: ${lesson.objective}`
-        // Include first 500 chars of lesson content for context
         if (lesson.content_md) {
           const preview = lesson.content_md.substring(0, 500).replace(/#{1,6}\s/g, '').trim()
           lessonContext += `\nLesson content preview: ${preview}...`
@@ -96,7 +134,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fetch student's weak topics from diagnostic results
     let weakTopicsContext = ''
     const { data: diagnostics } = await supabase
       .from('diagnostic_results')
@@ -123,51 +160,48 @@ export async function POST(request: NextRequest) {
       `\nGuide the student with the Socratic method — never give the final answer directly.`,
     ].filter(Boolean).join('')
 
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    const messages: ChatMessages = [
       { role: 'system', content: BASE_SYSTEM_PROMPT },
       { role: 'system', content: contextParts },
     ]
 
-    // Add conversation history (limit to last 10 to stay within token limits)
     const history = (conversation_history ?? []).slice(-10)
     for (const msg of history) {
       messages.push({ role: msg.role, content: msg.content })
     }
-
-    // Add current question
     messages.push({ role: 'user', content: question })
 
-    // ── Call AI provider ───────────────────────────────────────────────
-    const provider = process.env.AI_PROVIDER ?? 'openai'
-    const model    = process.env.AI_MODEL ?? 'gpt-4o-mini'
+    // ── Call AI provider with automatic fallback ───────────────────────
+    // Primary: AI_PROVIDER (default openai) with AI_MODEL
+    // Fallback: OpenRouter with AI_FALLBACK_MODEL when OPENROUTER_API_KEY is set
+    //           and the primary provider fails with a retryable error.
+    const provider      = process.env.AI_PROVIDER      ?? 'openai'
+    const model         = process.env.AI_MODEL         ?? 'gpt-4o-mini'
+    const fallbackModel = process.env.AI_FALLBACK_MODEL ?? 'mistralai/mistral-7b-instruct:free'
+    const hasFallback   = !!process.env.OPENROUTER_API_KEY
 
     let aiResponse = ''
 
     if (provider === 'openrouter') {
-      const openrouter = new OpenAI({
-        baseURL: 'https://openrouter.ai/api/v1',
-        apiKey:  process.env.OPENROUTER_API_KEY!,
-      })
-      const completion = await openrouter.chat.completions.create({
-        model,
-        messages,
-        max_tokens:  600,
-        temperature: 0.7,
-      })
-      aiResponse = completion.choices[0]?.message?.content ?? ''
+      // Explicit OpenRouter config — no fallback needed
+      aiResponse = await callOpenRouter(model, messages)
     } else {
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
-      const completion = await openai.chat.completions.create({
-        model,
-        messages,
-        max_tokens:  600,
-        temperature: 0.7,
-      })
-      aiResponse = completion.choices[0]?.message?.content ?? ''
+      // Try OpenAI first
+      try {
+        aiResponse = await callOpenAI(model, messages)
+      } catch (primaryErr) {
+        if (hasFallback && isRetryableProviderError(primaryErr)) {
+          // Primary failed — attempt OpenRouter fallback silently
+          console.warn('[AI Tutor] Primary provider failed, trying OpenRouter fallback:', (primaryErr as Error).message)
+          aiResponse = await callOpenRouter(fallbackModel, messages)
+        } else {
+          throw primaryErr // No fallback available — let outer catch handle it
+        }
+      }
     }
 
     if (!aiResponse) {
-      return NextResponse.json({ error: 'No response from AI' }, { status: 502 })
+      return NextResponse.json({ error: 'No response from AI.' }, { status: 502 })
     }
 
     // ── Log the interaction (fire-and-forget) ──────────────────────────
@@ -184,8 +218,35 @@ export async function POST(request: NextRequest) {
       suggested_next_step: 'Try answering the question above before I give more hints.',
       confidence:          'high',
     })
-  } catch (error) {
+
+  } catch (error: unknown) {
+    // Map provider error codes to student-friendly responses.
+    // Never expose API keys, model names, or internal error details.
+    if (error && typeof error === 'object' && 'status' in error) {
+      const { status } = error as { status: number }
+      if (status === 429) {
+        return NextResponse.json(
+          { error: 'AI tutor is temporarily unavailable. Please try again in a few minutes.' },
+          { status: 503 }
+        )
+      }
+      if (status === 401 || status === 403) {
+        return NextResponse.json(
+          { error: 'AI tutor is not configured correctly. Please contact support.' },
+          { status: 503 }
+        )
+      }
+      if (status === 400) {
+        return NextResponse.json(
+          { error: 'Could not process your question. Please try rephrasing it.' },
+          { status: 400 }
+        )
+      }
+    }
     console.error('[AI Tutor Error]', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'AI tutor is temporarily unavailable. Please try again.' },
+      { status: 503 }
+    )
   }
 }

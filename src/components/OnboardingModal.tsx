@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 import ProgressBar from '@/components/ProgressBar'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -27,20 +28,64 @@ function storageKey(studentId: string) {
   return `najah_onboarding_${studentId}`
 }
 
-function readStep(studentId: string): OnboardingStep {
-  try {
-    const raw = localStorage.getItem(storageKey(studentId))
-    if (raw === '1' || raw === '2' || raw === '3' || raw === 'done') return raw
-  } catch {
-    // localStorage not available (SSR / private mode)
-  }
-  return '1'
+function isValidStep(val: unknown): val is OnboardingStep {
+  return val === '1' || val === '2' || val === '3' || val === 'done'
 }
 
-function saveStep(studentId: string, step: OnboardingStep) {
+function readStepLocal(studentId: string): OnboardingStep | null {
+  try {
+    const raw = localStorage.getItem(storageKey(studentId))
+    if (isValidStep(raw)) return raw
+  } catch { /* localStorage not available */ }
+  return null
+}
+
+function saveStepLocal(studentId: string, step: OnboardingStep) {
   try {
     localStorage.setItem(storageKey(studentId), step)
   } catch { /* no-op */ }
+}
+
+/** Persist step to DB as fallback for private/incognito mode */
+async function saveStepDB(studentId: string, step: OnboardingStep) {
+  try {
+    const supabase = createClient()
+    await supabase
+      .from('students')
+      .update({ onboarding_step: step })
+      .eq('id', studentId)
+  } catch { /* no-op — column may not exist yet */ }
+}
+
+async function readStepDB(studentId: string): Promise<OnboardingStep | null> {
+  try {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('students')
+      .select('onboarding_step')
+      .eq('id', studentId)
+      .maybeSingle()
+    const val = (data as { onboarding_step?: unknown } | null)?.onboarding_step
+    if (isValidStep(val)) return val
+  } catch { /* no-op */ }
+  return null
+}
+
+async function readStep(studentId: string): Promise<OnboardingStep> {
+  // 1. Try localStorage first (fast, offline)
+  const local = readStepLocal(studentId)
+  if (local) return local
+  // 2. Fallback to DB (private mode, cross-device)
+  const db = await readStepDB(studentId)
+  if (db) return db
+  // 3. Default — new student
+  return '1'
+}
+
+async function saveStep(studentId: string, step: OnboardingStep) {
+  saveStepLocal(studentId, step)
+  // Fire-and-forget DB sync — gracefully degrades if column missing
+  saveStepDB(studentId, step).catch(() => {})
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -59,48 +104,53 @@ export default function OnboardingModal({
 
   // ── Resolve step on mount (client-only) ────────────────────────────────────
   useEffect(() => {
-    let stored = readStep(studentId)
+    let cancelled = false
 
-    // Auto-advance: if stored says step 1 but user already did the diagnostic
-    if (stored === '1' && hasDiagnostic) {
-      stored = '2'
-      saveStep(studentId, '2')
+    async function resolveStep() {
+      let stored = await readStep(studentId)
+
+      // Auto-advance: if stored says step 1 but user already did the diagnostic
+      if (stored === '1' && hasDiagnostic) {
+        stored = '2'
+        await saveStep(studentId, '2')
+      }
+
+      // Auto-advance: if stored says step 2 but user already completed a lesson
+      if (stored === '2' && completedLessonsCount > 0) {
+        stored = '3'
+        await saveStep(studentId, '3')
+      }
+
+      if (cancelled) return
+
+      if (stored !== 'done') {
+        setStep(stored)
+        // Small delay so the page renders first, then modal fades in gracefully
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => setVisible(true))
+        })
+      }
     }
 
-    // Auto-advance: if stored says step 2 but user already completed a lesson
-    if (stored === '2' && completedLessonsCount > 0) {
-      stored = '3'
-      saveStep(studentId, '3')
-    }
-
-    // Auto-advance: if stored says step 3 and user has already invited (points > threshold)
-    // We don't auto-complete here — let user explicitly dismiss step 3
-
-    if (stored !== 'done') {
-      setStep(stored)
-      // Small delay so the page renders first, then modal fades in gracefully
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setVisible(true))
-      })
-    }
+    resolveStep()
+    return () => { cancelled = true }
   }, [studentId, hasDiagnostic, completedLessonsCount])
 
   function advance(next: OnboardingStep) {
     setVisible(false)
     setTimeout(() => {
-      saveStep(studentId, next)
+      saveStep(studentId, next).catch(() => {})
       setStep(next)
-      // Re-fade in new step
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setVisible(true))
       })
-    }, 200) // wait for fade-out
+    }, 200)
   }
 
   function dismiss() {
     setVisible(false)
     setTimeout(() => {
-      saveStep(studentId, 'done')
+      saveStep(studentId, 'done').catch(() => {})
       setStep('done')
     }, 200)
   }

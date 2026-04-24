@@ -113,7 +113,20 @@ export default function TutorChat({ studentId, subject, lessonId, exerciseContex
 
       const data = await res.json()
 
-      if (!res.ok) throw new Error(data.error ?? 'Tutor unavailable')
+      if (!res.ok) {
+        // Map HTTP status to a student-friendly message — never show raw API errors
+        let friendlyError: string
+        if (res.status === 429) {
+          friendlyError = data.error ?? "You've reached the question limit for this hour. Please wait a bit before asking again. 🕐"
+        } else if (res.status === 503) {
+          friendlyError = 'The AI tutor is temporarily unavailable. Please try again in a moment. 🔧'
+        } else if (res.status === 400) {
+          friendlyError = "I couldn't quite understand that question. Could you try rephrasing it? ✏️"
+        } else {
+          friendlyError = 'Something went wrong. Please try again in a moment.'
+        }
+        throw new Error(friendlyError)
+      }
 
       const botMsg: Message   = { role: 'assistant', content: data.guided_response }
       const finalMessages     = [...nextMessages, botMsg]
@@ -122,9 +135,13 @@ export default function TutorChat({ studentId, subject, lessonId, exerciseContex
       // Persist conversation (fire-and-forget — don't block UI)
       persistMessages(finalMessages).catch(() => {})
     } catch (err) {
+      // err.message is already student-friendly (set above for HTTP errors,
+      // or a network error message for fetch failures)
       const errorMsg: Message = {
         role: 'assistant',
-        content: `Sorry, I'm having trouble right now. Please try again in a moment. (${(err as Error).message})`,
+        content: (err as Error).message.startsWith('Failed to fetch')
+          ? 'Could not reach the AI tutor. Please check your connection and try again.'
+          : (err as Error).message,
       }
       setMessages(prev => [...prev, errorMsg])
     } finally {
@@ -133,7 +150,7 @@ export default function TutorChat({ studentId, subject, lessonId, exerciseContex
   }
 
   return (
-    <div className="flex flex-col h-[520px] card p-0 overflow-hidden">
+    <div className="flex flex-col h-[70vh] max-h-[600px] min-h-[400px] card p-0 overflow-hidden">
       {/* Header */}
       <div className="bg-brand-600 text-white px-4 py-3 flex items-center gap-2">
         <span className="text-xl">🤖</span>

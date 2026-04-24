@@ -8,12 +8,16 @@ interface ExerciseCardProps {
   index: number
   onAnswer: (exerciseId: string, answer: string, isCorrect: boolean) => void
   disabled?: boolean
+  initialCorrect?: boolean   // present = previously answered; absent = fresh
 }
 
-export default function ExerciseCard({ exercise, index, onAnswer, disabled = false }: ExerciseCardProps) {
+export default function ExerciseCard({ exercise, index, onAnswer, disabled = false, initialCorrect }: ExerciseCardProps) {
+  // If disabled AND we know the previous result, mount directly in review state
+  const alreadyAnswered = disabled && initialCorrect !== undefined
+
   const [selected, setSelected]   = useState<string>('')
-  const [submitted, setSubmitted] = useState(false)
-  const [isCorrect, setIsCorrect] = useState<boolean | null>(null)
+  const [submitted, setSubmitted] = useState(() => alreadyAnswered)
+  const [isCorrect, setIsCorrect] = useState<boolean | null>(() => alreadyAnswered ? initialCorrect : null)
 
   function normalise(s: string) {
     return s.trim().toLowerCase()

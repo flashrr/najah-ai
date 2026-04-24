@@ -1,24 +1,40 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
+// useSearchParams must be inside a Suspense boundary — extract to a wrapper.
+// We read the ?error param via window.location.search in a useEffect instead,
+// which avoids the Suspense requirement entirely and works identically.
+
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
+
+  // Show errors forwarded from /auth/callback (expired confirmation link, etc.)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const cbError = params.get('error')
+    if (cbError) setError(cbError)
+  }, [])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
 
+    // createClient() inside the handler — NOT module scope.
+    // createBrowserClient at module scope runs during SSR before cookies exist,
+    // producing a broken instance that carries into hydration.
     const supabase = createClient()
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
 
     if (authError) {
       setError(authError.message)
@@ -26,20 +42,57 @@ export default function LoginPage() {
       return
     }
 
-    // Fetch role then redirect
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setLoading(false); return }
+    const session = data.session
+    if (!session) {
+      setError('Sign-in succeeded but no session was returned. Please try again.')
+      setLoading(false)
+      return
+    }
 
-    const { data: profile } = await supabase
+    // Primary: read role from JWT metadata — no DB query, no RLS risk.
+    const metaRole = session.user.user_metadata?.role as string | undefined
+    const KNOWN_ROLES = new Set(['student', 'parent', 'admin'])
+
+    if (metaRole && KNOWN_ROLES.has(metaRole)) {
+      const target =
+        metaRole === 'admin'  ? '/admin/dashboard'  :
+        metaRole === 'parent' ? '/parent/dashboard' :
+                                '/student/dashboard'
+
+      // Full page navigation — ensures all cookies are sent with the server
+      // request so middleware and layouts see the authenticated session.
+      window.location.href = target
+      return
+    }
+
+    // Fallback: JWT metadata missing — query profiles table.
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('role')
-      .eq('id', user.id)
-      .single()
+      .eq('id', session.user.id)
+      .maybeSingle()
 
-    const role = profile?.role ?? 'student'
-    if (role === 'admin')       router.push('/admin/dashboard')
-    else if (role === 'parent') router.push('/parent/dashboard')
-    else                        router.push('/student/dashboard')
+    if (!profile) {
+      const hint = profileError
+        ? `Database error: ${profileError.message}`
+        : 'Profile row is missing. Please contact support.'
+      setError(hint)
+      setLoading(false)
+      return
+    }
+
+    if (!KNOWN_ROLES.has(profile.role)) {
+      setError(`Unrecognised role "${profile.role}". Please contact support.`)
+      setLoading(false)
+      return
+    }
+
+    const target =
+      profile.role === 'admin'  ? '/admin/dashboard'  :
+      profile.role === 'parent' ? '/parent/dashboard' :
+                                  '/student/dashboard'
+
+    window.location.href = target
   }
 
   return (

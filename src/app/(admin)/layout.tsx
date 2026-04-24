@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import DashboardLayout from '@/components/DashboardLayout'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -7,13 +7,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
+  // Service client — auth already verified above; regular server client does
+  // not reliably propagate session to RLS in server components (setAll silent failure).
+  // Redirect to '/' not '/login' — middleware Rule B would loop us back here.
+  const admin = createServiceClient()
+  const { data: profile } = await admin
     .from('profiles')
     .select('role, full_name')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
-  if (!profile || profile.role !== 'admin') redirect('/login')
+  if (!profile || profile.role !== 'admin') redirect('/')
 
   return (
     <DashboardLayout role="admin" userName={profile.full_name}>
